@@ -1,5 +1,5 @@
 [project]
-name = "DSCI-522-Group-26-"
+name = "DSCI-522-Group-26-Hotel-Booking"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
