@@ -1,20 +1,192 @@
----
-title: "DSCI-522-Group-26"
-author: Mishenanigans
-date: 2026-11-19
-filters:
-  - live
-ojs-engine: true
-pyodide:
-  engine-url: https://cdn.jsdelivr.net/pyodide/v0.28.1/full/
-  packages:
-    - numpy
-    - pandas
-  cell-options:
-    autorun: false
-    max-lines: 20
-    timelimit: 90
+title: "Predicting Hotel Booking Cancellations"
+author: "DSCI-522 Group 26"
+date: "2026-11-19"
+format:
+  html:
+    toc: true
+    code-fold: true
+  pdf:
+    toc: true
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
 ---
 
-```{r}
+## Introduction
+
+This report analyzes the Hotel Booking demand dataset. The goal is to identify
+the main factors associated with cancellations and to build a simple predictive
+model. The response is `is_canceled`: 1 means that a booking was canceled and
+0 means that it was not.
+
+```{python}
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, ConfusionMatrixDisplay
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+hotel = pd.read_csv("../data/raw/hotel_bookings.csv")
+sns.set_theme(style="whitegrid")
 ```
+
+## Data and summary
+
+The raw dataset contains 119,390 bookings and 32 variables.
+
+```{python}
+summary = pd.DataFrame({
+    "bookings": hotel.shape[0],
+    "canceled": int(hotel["is_canceled"].sum()),
+    "cancel_rate": hotel["is_canceled"].mean(),
+    "resort_hotels": int((hotel["hotel"] == "Resort Hotel").sum()),
+    "city_hotels": int((hotel["hotel"] == "City Hotel").sum()),
+}, index=["value"]).T
+summary
+```
+
+## Cancellation patterns
+
+The cancellation rate differs by hotel type and booking lead time.
+
+```{python}
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+
+hotel.groupby("hotel")["is_canceled"].mean().mul(100).plot(
+    kind="bar", ax=axes[0], color=["#4C78A8", "#F58518"]
+)
+axes[0].set_title("Cancellation rate by hotel")
+axes[0].set_xlabel("")
+axes[0].set_ylabel("Canceled (%)")
+axes[0].tick_params(axis="x", rotation=0)
+
+sns.boxplot(
+    data=hotel,
+    x="is_canceled",
+    y="lead_time",
+    ax=axes[1],
+    hue="is_canceled",
+    legend=False,
+)
+axes[1].set_title("Lead time by cancellation outcome")
+axes[1].set_xlabel("Canceled (0 = no, 1 = yes)")
+axes[1].set_ylabel("Lead time (days)")
+
+plt.tight_layout()
+plt.show()
+```
+
+Bookings for resorts and city hotels have similar overall structure, while
+longer lead times tend to be associated with a higher chance of cancellation.
+
+```{python}
+month_order = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
+monthly = (
+    hotel.groupby("arrival_date_month")["is_canceled"]
+    .mean()
+    .reindex(month_order)
+    .mul(100)
+)
+
+fig, ax = plt.subplots(figsize=(9, 4))
+monthly.plot(marker="o", ax=ax, color="#4C78A8")
+ax.set_title("Cancellation rate by arrival month")
+ax.set_xlabel("Arrival month")
+ax.set_ylabel("Canceled (%)")
+ax.tick_params(axis="x", rotation=45)
+plt.tight_layout()
+plt.show()
+```
+
+## Predictive model
+
+We use a logistic regression model with lead time, hotel type, customer type,
+market segment, deposit type, repeated-guest status, and number of special
+requests. Categorical variables are one-hot encoded. Numeric variables are
+median-imputed and standardized. The data are split once into training and test
+sets (75% / 25%), with stratification.
+
+```{python}
+features = [
+    "lead_time",
+    "hotel",
+    "customer_type",
+    "market_segment",
+    "deposit_type",
+    "is_repeated_guest",
+    "total_of_special_requests",
+]
+X = hotel[features]
+y = hotel["is_canceled"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, random_state=42, stratify=y
+)
+
+numeric_features = ["lead_time", "is_repeated_guest", "total_of_special_requests"]
+categorical_features = [
+    "hotel", "customer_type", "market_segment", "deposit_type"
+]
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        (
+            "numeric",
+            Pipeline([
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+            ]),
+            numeric_features,
+        ),
+        (
+            "categorical",
+            Pipeline([
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore")),
+            ]),
+            categorical_features,
+        ),
+    ]
+)
+
+model = Pipeline([
+    ("preprocessor", preprocessor),
+    ("classifier", LogisticRegression(max_iter=1000)),
+])
+model.fit(X_train, y_train)
+predictions = model.predict(X_test)
+
+print(f"Test accuracy: {accuracy_score(y_test, predictions):.3f}")
+print(classification_report(y_test, predictions, target_names=["Not canceled", "Canceled"]))
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(5, 4))
+ConfusionMatrixDisplay.from_predictions(
+    y_test,
+    predictions,
+    display_labels=["Not canceled", "Canceled"],
+    cmap="Blues",
+    ax=ax,
+)
+ax.set_title("Confusion matrix")
+plt.tight_layout()
+plt.show()
+```
+
+## Conclusion
+
+Cancellation patterns vary by hotel, season, and lead time. The baseline
+logistic regression provides a reproducible prediction benchmark, but stronger
+performance may be possible after tuning or using additional booking variables.
