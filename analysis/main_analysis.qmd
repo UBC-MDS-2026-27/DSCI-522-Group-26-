@@ -1,0 +1,20 @@
+---
+title: "DSCI-522-Group-26"
+author: Mishenanigans
+date: 2026-11-19
+filters:
+  - live
+ojs-engine: true
+pyodide:
+  engine-url: https://cdn.jsdelivr.net/pyodide/v0.28.1/full/
+  packages:
+    - numpy
+    - pandas
+  cell-options:
+    autorun: false
+    max-lines: 20
+    timelimit: 90
+---
+
+```{r}
+```
