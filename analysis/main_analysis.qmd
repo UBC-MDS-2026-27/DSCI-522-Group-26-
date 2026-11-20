@@ -16,5 +16,107 @@ pyodide:
     timelimit: 90
 ---
 
-```{r}
+```{python}
+import pandas as pd
+import kagglehub
+import shutil
+from pathlib import Path
+
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from scipy.sparse import csr_matrix
+```
+
+```{python}
+root = Path.cwd().resolve()
+if root.name == "analysis":
+    root = root.parent
+
+raw_dir = root / "data" / "raw"
+processed_dir = root / "data" / "processed"
+
+raw_dir.mkdir(parents=True, exist_ok=True)
+processed_dir.mkdir(parents=True, exist_ok=True)
+
+
+download_dir = Path(
+    kagglehub.dataset_download("jessemostipak/hotel-booking-demand")
+)
+
+shutil.copyfile(
+    download_dir / "hotel_bookings.csv",
+    raw_dir / "hotel_bookings.csv",
+)
+
+df = pd.read_csv(raw_dir / "hotel_bookings.csv")
+```
+
+```{python}
+
+df = df.drop(columns=[
+    "reservation_status",
+    "reservation_status_date",
+    "assigned_room_type",
+    "booking_changes",
+    "days_in_waiting_list",
+])
+
+
+X = df.drop(columns="is_canceled").copy()
+y = df["is_canceled"].reset_index(drop=True)
+
+
+for col in ["agent", "company"]:
+    X[col] = X[col].fillna(-1).astype(int).astype(str)
+
+numeric_cols = X.select_dtypes(include="number").columns.tolist()
+categorical_cols = X.select_dtypes(exclude="number").columns.tolist()
+
+
+numeric_pipe = make_pipeline(
+    SimpleImputer(strategy="median"),
+    StandardScaler(),
+)
+
+
+categorical_pipe = make_pipeline(
+    SimpleImputer(strategy="constant", fill_value="Unknown"),
+    OneHotEncoder(handle_unknown="ignore"),
+)
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("numeric", numeric_pipe, numeric_cols),
+        ("categorical", categorical_pipe, categorical_cols),
+    ],
+    sparse_threshold=1.0,
+)
+```
+
+```{python}
+X_processed = preprocessor.fit_transform(X)
+
+df_processed = pd.DataFrame.sparse.from_spmatrix(
+    csr_matrix(X_processed),
+    columns=preprocessor.get_feature_names_out(),
+)
+
+
+df_processed["is_canceled"] = y
+
+
+output_file = processed_dir / "hotel_bookings_processed.csv"
+
+df_processed.to_csv(
+    output_file,
+    index=False,
+    chunksize=1000,
+)
+
+print("Processed shape:", df_processed.shape)
+print("Saved to:", output_file.resolve())
+
+df_processed.head()
 ```
