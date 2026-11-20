@@ -1,6 +1,6 @@
 ---
-title: "DSCI-522-Group-26"
-author: Mishenanigans
+title: "DSCI-522-Group-26-Hotel-Booking"
+author: Trung Nghia Vo, Misha Shen, Nathan Li, Anushka Seth
 date: 2026-11-19
 format:
   html:
@@ -9,19 +9,72 @@ format:
     toc: true
 ---
 ```{python}
-import pandas as pd
-import kagglehub
+# Standard library
 import shutil
 from pathlib import Path
 
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import make_pipeline
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+# Third-party libraries
+import kagglehub
+import pandas as pd
+import numpy as np
 from scipy.sparse import csr_matrix
+from IPython.display import display
+
+# Scikit-learn: Base utilities
+from sklearn.base import clone
+
+# Scikit-learn: Data preprocessing
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+# Scikit-learn: Models
+from sklearn.dummy import DummyClassifier
+from sklearn.linear_model import LogisticRegression
+
+# Scikit-learn: Model selection
+from sklearn.model_selection import train_test_split, cross_validate, cross_val_predict
+
+# Scikit-learn: Evaluation metrics and visualization
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    make_scorer,
+    ConfusionMatrixDisplay,
+    RocCurveDisplay,
+)
 ```
 
 # Methods
+## Overview of the analysis
+
+The goal of this analysis is to predict whether a hotel booking will be cancelled (`is_canceled`) using information available about the booking. We used the Hotel Booking Demand dataset from Kaggle, which contains 119,390 bookings from a city hotel and a resort hotel. Of these, 44,224 (37.0%) were cancelled and 75,166 (63.0%) were not.
+
+We first removed five columns. `reservation_status` and `reservation_status_date` record the outcome of the booking itself, so keeping them would let the model "see" the answer (target leakage). `assigned_room_type`, `booking_changes` and `days_in_waiting_list` are recorded after the booking is made, so they would not be available when predicting whether a new booking will cancel. The remaining 26 predictors were prepared as follows: missing values in numeric columns were replaced with the median and the columns were standardized, missing values in categorical columns were labelled "Unknown" and the columns were one-hot encoded, and the `agent` and `company` ID columns were treated as categories, with missing IDs coded as -1. After encoding there were 929 features.
+
+We then split the data into 80% training (95,512 bookings) and 20% test (23,878 bookings), stratified by the target so both sets keep the 37% cancellation rate. All preprocessing was placed inside a scikit-learn pipeline together with the classifier, so imputation, scaling and encoding are learned from training data only and the test set cannot influence them. The test set was kept untouched until the very end.
+
+The remaining steps were:
+
+1. Fit a baseline model and a logistic regression model and compare them using 5-fold cross-validation on the training set.
+2. Select the final model using the cross-validation results only.
+3. Choose a decision threshold using out-of-fold predictions on the training set.
+4. Evaluate the final model once on the held-out test set.
+
+## Evaluation metrics
+We report accuracy, precision, recall, F1, ROC-AUC and average precision (AP), but different metrics play different roles:
+
+- **Average precision (primary metric for model selection).** The practical use of this model is to flag bookings that are likely to cancel so the hotel can act on them. AP summarizes the trade-off between precision (how many flagged bookings really cancel) and recall (how many cancellations we catch) across all possible thresholds, and it focuses on the cancellation class. It does not depend on a particular threshold, so it measures how well the model ranks bookings by risk. Because the baseline's AP equals the positive rate (0.370), it also has an easy-to-read reference point.
+
+- **F1 (metric for choosing the threshold).** Once the model ranks bookings, we must decide how high the predicted probability has to be before a booking is flagged. We chose the threshold that maximizes F1, which weights precision and recall equally. This is a neutral assumption, because we do not have the hotel's actual costs of a missed cancellation versus a false alarm.
+
+- **Precision, recall, ROC-AUC and accuracy (supporting metrics).** Precision and recall show the two kinds of error directly. ROC-AUC is reported as a second threshold-free measure of ranking quality. With a 37% positive rate it is not badly inflated, so it agrees with AP. Accuracy is reported for completeness, but it is a weak headline metric here because the do-nothing baseline already reaches 63.0%.
+
 ## Download raw data
 ```{python}
 root = Path.cwd().resolve()
@@ -109,7 +162,152 @@ df_processed.to_csv(
 )
 
 print("Processed shape:", df_processed.shape)
-print("Saved to:", output_file.resolve())
-
 df_processed.head()
 ```
+
+## Classification analysis
+```{python}
+RANDOM_STATE = 42
+```
+
+### Train/test split
+```{python}
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=RANDOM_STATE
+)
+print(f"Train: {X_train.shape}, Test: {X_test.shape}")
+print(f"Cancellation rate (train): {y_train.mean():.3f}")
+```
+
+### Models
+We compared two models:
+
+- **Baseline (majority-class dummy classifier).** This predicts "not cancelled" for every booking. It does not learn anything, but it gives a floor that any useful model must beat, and it shows why accuracy alone is misleading here (it already scores 63.0%).
+
+- **Logistic regression.** This is a standard, well-understood classifier for a binary outcome. It outputs a probability of cancellation for each booking, which we need in order to rank bookings by risk and to adjust the decision threshold. It trains quickly even with about 930 features, and its coefficients show which booking characteristics raise or lower cancellation risk, which makes the results easier to explain to a hotel manager. We used it as our main model because it is a strong, interpretable starting point for a tabular problem with many categorical variables.
+
+```{python}
+models = {
+    "Dummy (majority class)": make_pipeline(
+        clone(preprocessor),
+        DummyClassifier(strategy="most_frequent"),
+    ),
+    "Logistic Regression": make_pipeline(
+        clone(preprocessor),
+        LogisticRegression(max_iter=1000, random_state=RANDOM_STATE),
+    ),
+}
+```
+
+### Cross-validated comparison (training set only)
+```{python}
+scoring = {
+    "accuracy": "accuracy",
+    "precision": make_scorer(precision_score, zero_division=0),
+    "recall": "recall",
+    "f1": make_scorer(f1_score, zero_division=0),
+    "roc_auc": "roc_auc",
+    "average_precision": "average_precision",
+}
+
+cv_rows = []
+for name, model in models.items():
+    res = cross_validate(model, X_train, y_train, cv=5, scoring=scoring)
+    row = {"model": name}
+    row.update({m: res[f"test_{m}"].mean() for m in scoring})
+    cv_rows.append(row)
+
+cv_results = pd.DataFrame(cv_rows).set_index("model").round(3)
+cv_results
+```
+
+Table 1. 5-fold cross-validation results on the training set
+
+### Model Selection
+```{python}
+# Selection uses cross-validation only; the test set has not been touched yet.
+selection_metric = "average_precision"
+
+cv_best = cv_results[selection_metric].idxmax()
+print(f"Selected model: {cv_best} "
+      f"(CV {selection_metric} = {cv_results.loc[cv_best, selection_metric]:.3f})")
+
+final_model = clone(models[cv_best])
+```
+
+### Threshold selection (training set only)
+```{python}
+# Out-of-fold predicted probabilities on the training set
+oof_proba = cross_val_predict(
+    final_model, X_train, y_train, cv=5, method="predict_proba"
+)[:, 1]
+
+rows = []
+for t in np.arange(0.2, 0.81, 0.05).round(2):
+    pred = (oof_proba >= t).astype(int)
+    rows.append({
+        "threshold": t,
+        "precision": precision_score(y_train, pred, zero_division=0),
+        "recall": recall_score(y_train, pred),
+        "f1": f1_score(y_train, pred),
+    })
+
+threshold_table = pd.DataFrame(rows).set_index("threshold").round(3)
+display(threshold_table)
+
+threshold = threshold_table["f1"].idxmax()
+print(f"Chosen threshold: {threshold}")
+```
+
+Table 2. Scoring accross different thresholds (default is 0.5)
+
+### Final evaluation (held-out test set, used once)
+```{python}
+def evaluate(model, X, y, threshold=0.5):
+    proba = model.predict_proba(X)[:, 1]
+    pred = (proba >= threshold).astype(int)
+    return {
+        "accuracy": accuracy_score(y, pred),
+        "precision": precision_score(y, pred, zero_division=0),
+        "recall": recall_score(y, pred),
+        "f1": f1_score(y, pred),
+        "roc_auc": roc_auc_score(y, proba),
+        "pr_auc": average_precision_score(y, proba),
+    }
+
+final_model.fit(X_train, y_train)
+dummy = clone(models["Dummy (majority class)"]).fit(X_train, y_train)
+
+test_results = pd.DataFrame({
+    "Dummy (0.5)": evaluate(dummy, X_test, y_test),
+    f"{cv_best} (0.5)": evaluate(final_model, X_test, y_test),
+    f"{cv_best} ({threshold})": evaluate(final_model, X_test, y_test, threshold),
+}).T.round(3)
+test_results
+```
+
+Table 3. Final results on the held-out test set
+
+# Results
+
+## Model comparison
+Table 1 shows the 5-fold cross-validation results on the training set. The baseline reaches 63.0% accuracy only by predicting that no booking cancels, so its precision, recall and F1 are all 0, its ROC-AUC is 0.500 (no discrimination) and its AP of 0.370 equals the cancellation rate. Logistic regression is far better on every measure, with an AP of 0.868, a ROC-AUC of 0.908 and an F1 of 0.749. Because AP was our selection metric, logistic regression was selected as the final model.
+
+## Threshold selection
+At the default threshold of 0.5, logistic regression has a precision of 0.806 but a recall of only 0.700, so it misses about 3 in 10 cancellations. Using out-of-fold predictions on the training set, we examined thresholds from 0.20 to 0.80. Lowering the threshold increases recall and lowers precision, and F1 was highest at **0.35** (precision 0.725, recall 0.825, F1 0.771 in the training data).
+
+## Test set performance
+Table 3 shows the final results on the held-out test set. At the default threshold, the test results closely match the cross-validation estimates (AP 0.865 vs. 0.868, ROC-AUC 0.907 vs. 0.908, F1 0.748 vs. 0.749), so the model does not appear to be overfitted. With the threshold of 0.35 chosen on training data, the test set shows the same pattern: recall rises from 0.697 to 0.817 and F1 from 0.748 to 0.769, while precision falls from 0.808 to 0.726 and accuracy falls slightly from 0.826 to 0.818. AP and ROC-AUC are unchanged because they do not depend on the threshold.
+
+## Best model
+
+The best model is **logistic regression with a decision threshold of 0.35**. It clearly outperforms the baseline, generalizes well to unseen bookings, and catches about 82% of cancellations, compared with about 70% at the default threshold. The cost is more false alarms: about 27% of flagged bookings do not cancel, compared with about 19% at 0.5. We consider this a reasonable trade if an unsold room caused by a missed cancellation is more costly to the hotel than a flagged booking that turns out to show up. If the hotel instead wants to be more certain that flagged bookings will cancel, a higher threshold, such as 0.5, is more appropriate.
+
+# Discussion
+
+## Limitations
+
+- Only one model besides the baseline was compared, so we cannot say logistic regression is the best possible model. Logistic regression assumes linear effects on the log-odds and may miss interactions between features (for example, lead time and deposit type). A tree-based model such as gradient boosting is the natural next step.
+- The threshold was chosen to maximize F1, which is an assumption of equal importance for precision and recall, not a cost derived from the hotel's business.
+- The dataset contains duplicate rows, and copies may appear in both the training and test sets, so the scores may be slightly optimistic.
+- The data come from two hotels over a limited time period, and we used a random split rather than a time-based split. Performance on future bookings, or at other hotels, may be lower.
