@@ -1,2 +1,4 @@
 .DS_Store
 .venv/
+# Quarto generated files
+analysis/*_files/
