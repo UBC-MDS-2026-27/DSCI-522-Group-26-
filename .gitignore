@@ -4,3 +4,4 @@
 analysis/*_files/
 **/*.quarto_ipynb
 /.quarto/
+/data/processed/hotel_bookings_processed.csv
