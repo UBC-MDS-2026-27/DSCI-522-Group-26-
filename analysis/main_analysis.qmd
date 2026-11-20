@@ -2,20 +2,12 @@
 title: "DSCI-522-Group-26"
 author: Mishenanigans
 date: 2026-11-19
-filters:
-  - live
-ojs-engine: true
-pyodide:
-  engine-url: https://cdn.jsdelivr.net/pyodide/v0.28.1/full/
-  packages:
-    - numpy
-    - pandas
-  cell-options:
-    autorun: false
-    max-lines: 20
-    timelimit: 90
+format:
+  html:
+    toc: true
+  pdf:
+    toc: true
 ---
-
 ```{python}
 import pandas as pd
 import kagglehub
@@ -29,6 +21,8 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from scipy.sparse import csr_matrix
 ```
 
+# Methods
+## Download raw data
 ```{python}
 root = Path.cwd().resolve()
 if root.name == "analysis":
@@ -53,6 +47,7 @@ shutil.copyfile(
 df = pd.read_csv(raw_dir / "hotel_bookings.csv")
 ```
 
+## Process data
 ```{python}
 
 df = df.drop(columns=[
@@ -93,9 +88,7 @@ preprocessor = ColumnTransformer(
     ],
     sparse_threshold=1.0,
 )
-```
 
-```{python}
 X_processed = preprocessor.fit_transform(X)
 
 df_processed = pd.DataFrame.sparse.from_spmatrix(
