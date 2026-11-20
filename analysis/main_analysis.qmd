@@ -436,6 +436,7 @@ display(threshold_table)
 threshold = threshold_table["f1"].idxmax()
 print(f"Chosen threshold: {threshold}")
 ```
+Table 2. Scoring accross different thresholds (default is 0.5)
 
 ### Visualizing the training threshold trade-off
 
@@ -463,7 +464,6 @@ fig.tight_layout()
 plt.show()
 ```
 
-Table 2. Scoring accross different thresholds (default is 0.5)
 
 ### Final evaluation (held-out test set, used once)
 ```{python}
