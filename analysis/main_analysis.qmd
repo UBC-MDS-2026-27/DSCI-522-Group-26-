@@ -519,6 +519,8 @@ Table 3. Final results on the held-out test set
 
 Figures 1 through 4 summarize the training-set cancellation patterns that motivated the modelling analysis. Figure 1 establishes the class imbalance, while Figures 2 through 4 show how cancellation rates vary by lead time, deposit type, arrival month, and hotel type. Table 1 and Figure 5 compare the model candidates, and Table 2 and Figure 6 describe the threshold trade-off before the final held-out evaluation in Table 3.
 
+The main finding is that booking attributes can support useful cancellation-risk ranking even though the majority-class baseline has misleadingly high accuracy. The held-out results show that the selected logistic regression model outperforms the baseline across the threshold-dependent and threshold-independent metrics, and that lowering the decision threshold changes the balance between missed cancellations and false alarms.
+
 ## Model comparison
 Table 1 shows the 5-fold cross-validation results on the training set. The baseline reaches 63.0% accuracy only by predicting that no booking cancels, so its precision, recall and F1 are all 0, its ROC-AUC is 0.500 (no discrimination) and its AP of 0.370 equals the cancellation rate. Logistic regression is far better on every measure, with an AP of 0.868, a ROC-AUC of 0.908 and an F1 of 0.749. Because AP was our selection metric, logistic regression was selected as the final model.
 
@@ -533,6 +535,10 @@ Table 3 shows the final results on the held-out test set. At the default thresho
 The best model is **logistic regression with a decision threshold of 0.35**. It clearly outperforms the baseline, generalizes well to unseen bookings, and catches about 82% of cancellations, compared with about 70% at the default threshold. The cost is more false alarms: about 27% of flagged bookings do not cancel, compared with about 19% at 0.5. We consider this a reasonable trade if an unsold room caused by a missed cancellation is more costly to the hotel than a flagged booking that turns out to show up. If the hotel instead wants to be more certain that flagged bookings will cancel, a higher threshold, such as 0.5, is more appropriate.
 
 # Discussion
+
+These results answer the stated question by showing that information available at booking time can identify likely cancellations, and that the useful threshold depends on the hotel's operational priorities. The findings are consistent with the training patterns in Figures 1 through 4, where cancellation frequency varies across booking lead time, deposit type, and temporal or hotel characteristics. It was reasonable to expect some ranking advantage over the baseline because cancellation behavior differs across these booking attributes, although the size of the difference at held-out evaluation was favorable.
+
+The real-world meaning is that a hotel could use the model to rank reservations by cancellation risk rather than making a binary decision about every booking. At the 0.5 threshold, the model catches fewer cancellations but is more certain that a flagged booking is likely to cancel. At 0.35, it catches more cancellations but also flags more bookings that remain active. This makes the threshold decision a business question: the hotel should prefer the lower threshold if a missed cancellation is more costly, and the higher threshold if unnecessary intervention or a false alarm is more costly.
 
 ## Limitations
 
